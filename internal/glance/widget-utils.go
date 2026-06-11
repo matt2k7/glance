@@ -24,19 +24,21 @@ var (
 const defaultClientTimeout = 5 * time.Second
 
 var defaultHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		MaxIdleConnsPerHost: 10,
-		Proxy:               http.ProxyFromEnvironment,
-	},
-	Timeout: defaultClientTimeout,
+        Transport: &http.Transport{
+                MaxIdleConnsPerHost: 10,
+                Proxy:               http.ProxyFromEnvironment,
+                IdleConnTimeout:     90 * time.Second, // <-- ADD THIS LINE
+        },
+        Timeout: defaultClientTimeout,
 }
 
-var defaultInsecureHTTPClient = &http.Client{
-	Timeout: defaultClientTimeout,
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		Proxy:           http.ProxyFromEnvironment,
-	},
+var defaultInsecureHTTPClient = &http.Client{        
+        Timeout: defaultClientTimeout,
+        Transport: &http.Transport{
+                TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+                Proxy:           http.ProxyFromEnvironment,
+                IdleConnTimeout:     90 * time.Second, // <-- ADD THIS LINE
+        },
 }
 
 type requestDoer interface {
