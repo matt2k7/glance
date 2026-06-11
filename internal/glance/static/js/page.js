@@ -642,6 +642,17 @@ async function setupCalendars() {
         calendar.default(elems[i]);
 }
 
+async function setupServerStats() {
+    const elems = Array.from(document.getElementsByClassName("widget-type-server-stats"));
+    if (elems.length == 0) return;
+
+    const serverStats = await import ('./server-stats.js');
+
+    for (let i = 0; i < elems.length; i++) {
+        serverStats.default(elems[i]);
+    }
+}
+
 async function setupTodos() {
     const elems = Array.from(document.getElementsByClassName("todo"));
     if (elems.length == 0) return;
@@ -757,6 +768,7 @@ async function setupPage() {
         setupClocks()
         await setupCalendars();
         await setupTodos();
+        await setupServerStats();
         setupCarousels();
         setupSearchBoxes();
         setupCollapsibleLists();
