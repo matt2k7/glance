@@ -324,3 +324,155 @@ var weatherCodeTable = map[int]string{
 	96: "Thunderstorm",
 	99: "Thunderstorm",
 }
+
+// --- OpenWeatherMap provider ---
+
+type owmCurrentResponseJson struct {
+    Dt   int64 `json:"dt"`
+    Main struct {
+        Temp      float64 `json:"temp"`
+        FeelsLike float64 `json:"feels_like"`
+    } `json:"main"`
+    Weather []struct {
+        ID          int    `json:"id"`
+        Description string `json:"description"`
+    } `json:"weather"`
+    Sys struct {
+        Sunrise int64 `json:"sunrise"`
+        Sunset  int64 `json:"sunset"`
+    } `json:"sys"`
+    Timezone int `json:"timezone"` // offset in seconds from UTC
+    Name     string `json:"name"`
+}
+
+type owmForecastItemJson struct {
+    Dt   int64 `json:"dt"`
+    Main struct {
+        Temp float64 `json:"temp"`
+    } `json:"main"`
+    Pop float64 `json:"pop"` // probability of precipitation 0-1
+}
+
+type owmForecastResponseJson struct {
+    List []owmForecastItemJson `json:"list"`
+}
+
+func fetchWeatherFromOWM(lat, lon float64, units, apiKey string) (*weather, error) {
+    var unitParam string
+    if units == "imperial" {
+        unitParam = "imperial"
+    } else {
+        unitParam = "metric"
+    }
+
+    // Fetch current weather
+    currentURL := fmt.Sprintf(
+        "https://api.openweathermap.org/data/2.5/weather?lat=%f&lon=%f&units=%s&appid=%s",
+        lat, lon, unitParam, apiKey,
+    )
+    currentReq, _ := http.NewRequest("GET", currentURL, nil)
+    currentJson, err := decodeJsonFromRequest[owmCurrentResponseJson](defaultHTTPClient, currentReq)
+    if err != nil {
+        return nil, fmt.Errorf("%w: %v", errNoContent, err)
+    }
+
+    // Fetch 5-day/3-hour forecast
+    forecastURL := fmt.Sprintf(
+        "https://api.openweathermap.org/data/2.5/forecast?lat=%f&lon=%f&units=%s&cnt=24&appid=%s",
+        lat, lon, unitParam, apiKey,
+    )
+    forecastReq, _ := http.NewRequest("GET", forecastURL, nil)
+    forecastJson, err := decodeJsonFromRequest[owmForecastResponseJson](defaultHTTPClient, forecastReq)
+    if err != nil {
+        return nil, fmt.Errorf("%w: %v", errNoContent, err)
+    }
+
+    // OWM forecast is in 3-hour steps; we need 12 2-hour buckets to match glance's display
+    // Map 3h steps -> 2h display columns (best effort)
+    loc := time.FixedZone("local", currentJson.Timezone)
+    now := time.Now().In(loc)
+
+    currentBar := now.Hour() / 2
+    sunriseBar := (time.Unix(currentJson.Sys.Sunrise, 0).In(loc).Hour()) / 2
+    sunsetBar := (time.Unix(currentJson.Sys.Sunset, 0).In(loc).Hour() - 1) / 2
+    if sunsetBar < 0 {
+        sunsetBar = 0
+    }
+
+    // Build 12 temperature/precipitation columns from the 3h forecast
+    // Each column = 2h block; OWM gives 3h blocks, so we interpolate
+    temperatures := make([]int, 12)
+    precipitations := make([]bool, 12)
+
+    for i := 0; i < 12; i++ {
+        // Map column i (2h block) to the closest 3h forecast index
+        idx := (i * 2) / 3
+        if idx >= len(forecastJson.List) {
+            idx = len(forecastJson.List) - 1
+        }
+        temperatures[i] = int(math.Round(forecastJson.List[idx].Main.Temp))
+        precipitations[i] = forecastJson.List[idx].Pop > 0.75
+    }
+    // Overwrite current bar with actual current temp
+    temperatures[currentBar] = int(math.Round(currentJson.Main.Temp))
+
+    minT := slices.Min(temperatures)
+    maxT := slices.Max(temperatures)
+    tempRange := float64(maxT - minT)
+
+    bars := make([]weatherColumn, 12)
+    for i := 0; i < 12; i++ {
+        bars[i] = weatherColumn{
+            Temperature:     temperatures[i],
+            HasPrecipitation: precipitations[i],
+        }
+        if tempRange > 0 {
+            bars[i].Scale = float64(temperatures[i]-minT) / tempRange
+        } else {
+            bars[i].Scale = 1
+        }
+    }
+
+    // Map OWM weather ID to glance's weather code table
+    owmCode := 0
+    if len(currentJson.Weather) > 0 {
+        owmCode = owmIDToWeatherCode(currentJson.Weather[0].ID)
+    }
+
+    return &weather{
+        Temperature:         int(math.Round(currentJson.Main.Temp)),
+        ApparentTemperature: int(math.Round(currentJson.Main.FeelsLike)),
+        WeatherCode:         owmCode,
+        CurrentColumn:       currentBar,
+        SunriseColumn:       sunriseBar,
+        SunsetColumn:        sunsetBar,
+        Columns:             bars,
+    }, nil
+}
+
+// owmIDToWeatherCode maps OWM condition IDs to the WMO weather codes
+// used in glance's weatherCodeTable
+func owmIDToWeatherCode(id int) int {
+    switch {
+    case id == 800:
+        return 0 // Clear sky
+    case id == 801:
+        return 1 // Mainly clear
+    case id == 802:
+        return 2 // Partly cloudy
+    case id >= 803:
+        return 3 // Overcast
+    case id >= 700 && id < 800:
+        return 45 // Fog/mist
+    case id >= 600 && id < 700:
+        return 71 // Snow
+    case id >= 500 && id < 600:
+        return 61 // Rain
+    case id >= 300 && id < 400:
+        return 51 // Drizzle
+    case id >= 200 && id < 300:
+        return 95 // Thunderstorm
+    default:
+        return 0
+    }
+}
