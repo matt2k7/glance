@@ -2,11 +2,13 @@ name: Create release
 
 permissions:
   contents: write
+  packages: write # Optional: Only needed if you ever push to ghcr.io
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch: # Enables manual triggering
 
 jobs:
   release:
@@ -17,23 +19,28 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Golang
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # CRITICAL: QEMU is required to build ARM64/ARMv7 Docker images on an AMD64 runner
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Golang
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: release
+          version: latest
+          args: release --clean
