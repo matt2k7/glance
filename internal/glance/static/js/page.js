@@ -768,7 +768,13 @@ async function setupPage() {
         setupClocks()
         await setupCalendars();
         await setupTodos();
-        await setupServerStats();
+
+        try {
+            await setupServerStats();
+        } catch (err) {
+            console.error("Failed to set up server stats live updates:", err);
+        }
+
         setupCarousels();
         setupSearchBoxes();
         setupCollapsibleLists();
